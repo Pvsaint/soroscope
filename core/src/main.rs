@@ -1,7 +1,9 @@
+mod errors;
+
+use crate::errors::AppError;
 use axum::{
     extract::Json,
-    http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +41,7 @@ struct ResourceReport {
     ),
     tag = "Analysis"
 )]
-async fn analyze(Json(payload): Json<AnalyzeRequest>) -> Result<Json<ResourceReport>, StatusCode> {
+async fn analyze(Json(payload): Json<AnalyzeRequest>) -> Result<Json<ResourceReport>, AppError> {
     // Placeholder implementation
     let report = ResourceReport {
         cpu_instructions: 1000,
@@ -71,15 +73,20 @@ async fn main() {
 
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route("/", get(|| async { "Hello, World!" }))
+        .route(
+            "/error",
+            get(|| async { Err::<&str, AppError>(AppError::BadRequest("Test error".to_string())) }),
+        )
         .route("/analyze", post(analyze))
         .layer(cors);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
         .unwrap();
 
-    println!("SoroScope API running on http://localhost:8080");
-    println!("Swagger UI available at http://localhost:8080/swagger-ui");
+    println!("SoroScope API running on http://{}", listener.local_addr().unwrap());
+    println!("Swagger UI available at http://{}/swagger-ui", listener.local_addr().unwrap());
 
     axum::serve(listener, app).await.unwrap();
 }
