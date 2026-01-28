@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -92,22 +94,43 @@ async fn analyze(Json(payload): Json<AnalyzeRequest>) -> Result<Json<ResourceRep
 )]
 struct ApiDoc;
 
+async fn health_check() -> &'static str {
+    "OK"
+}
+
 #[tokio::main]
 async fn main() {
-    // Load configuration
-    let config = load_config().expect("Failed to load configuration");
-    println!("SoroScope initialized with config: {:?}", config);
+    // -------------------------------
+    // Initialize Tracing / Logging
+    // -------------------------------
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    // CLI Argument Handling
+    tracing::info!("SoroScope Starting...");
+
+    // -------------------------------
+    // Load configuration
+    // -------------------------------
+    let config = load_config().expect("Failed to load configuration");
+    tracing::info!("SoroScope initialized with config: {:?}", config);
+
+    // -------------------------------
+    // CLI Argument Handling (Benchmark)
+    // -------------------------------
     let args: Vec<String> = env::args().collect();
+
     if args.len() > 1 && args[1] == "benchmark" {
-        println!("Starting SoroScope Benchmark...");
+        tracing::info!("Starting SoroScope Benchmark...");
+
         let possible_paths = vec![
             "target/wasm32-unknown-unknown/release/soroban_token_contract.wasm",
             "../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm",
         ];
 
         let mut wasm_path = None;
+
         for p in possible_paths {
             let path = PathBuf::from(p);
             if path.exists() {
@@ -118,37 +141,48 @@ async fn main() {
 
         if let Some(path) = wasm_path {
             if let Err(e) = benchmarks::run_token_benchmark(path) {
-                eprintln!("Benchmark failed: {}", e);
+                tracing::error!("Benchmark failed: {}", e);
             }
         } else {
-            eprintln!("Could not find soroban_token_contract.wasm. Make sure to build the contract first.");
+            tracing::error!(
+                "Could not find soroban_token_contract.wasm. Build the contract first."
+            );
         }
+
         return;
     }
 
-    // Default Web Server with Swagger UI
-    println!("SoroScope API Server starting...");
-    println!("Run with 'benchmark' argument to profile token contract.");
+    // -------------------------------
+    // Web Server Setup
+    // -------------------------------
+    tracing::info!("Starting SoroScope API Server...");
 
     let cors = CorsLayer::new().allow_origin(Any);
 
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/", get(|| async { "Hello from SoroScope! Usage: cargo run -p soroscope-core -- benchmark" }))
+        .route("/health", get(health_check))
         .route(
             "/error",
             get(|| async { Err::<&str, AppError>(AppError::BadRequest("Test error".to_string())) }),
         )
         .route("/analyze", post(analyze))
-        .layer(cors);
+        .layer(cors)
+        .layer(TraceLayer::new_for_http());
 
+    // -------------------------------
+    // Run Server
+    // -------------------------------
     let bind_addr = format!("0.0.0.0:{}", config.server_port);
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .unwrap();
+        .expect("Failed to bind to address");
 
-    println!("SoroScope API running on http://{}", listener.local_addr().unwrap());
-    println!("Swagger UI available at http://{}/swagger-ui", listener.local_addr().unwrap());
+    tracing::info!("Server listening on http://{}", listener.local_addr().unwrap());
+    tracing::info!("Swagger UI available at http://{}/swagger-ui", listener.local_addr().unwrap());
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .await
+        .expect("Server failed to start");
 }
