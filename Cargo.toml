@@ -2,8 +2,7 @@
 resolver = "2"
 members = [
     "core",
-    "api",
     "contracts/token",
     "contracts/liquidity_pool",
-    "soroscope-api",
+    "api",
 ]
