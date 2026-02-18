@@ -39,7 +39,7 @@ jobs:
           components: clippy
           target: wasm32-unknown-unknown
       - name: Install Soroban CLI
-        run: cargo install soroban-cli --features opt
+        run: cargo install soroban-cli
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -56,7 +56,7 @@ jobs:
         with:
           target: wasm32-unknown-unknown
       - name: Install Soroban CLI
-        run: cargo install soroban-cli --features opt
+        run: cargo install soroban-cli
       - name: Run Tests
         run: cargo test
 
