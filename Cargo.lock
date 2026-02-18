@@ -2699,6 +2699,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-liquidity-pool-factory-contract"
+version = "0.1.0"
+dependencies = [
+ "liquidity_pool",
+ "soroban-sdk",
+ "soroban-token-contract",
+]
+
+[[package]]
 name = "soroban-sdk"
 version = "22.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
