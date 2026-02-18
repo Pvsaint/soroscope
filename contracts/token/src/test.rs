@@ -1,4 +1,4 @@
-#![cfg(test)]
+
 
 use crate::contract::{Token, TokenClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
