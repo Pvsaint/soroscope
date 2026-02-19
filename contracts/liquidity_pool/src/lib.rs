@@ -417,8 +417,8 @@ impl LiquidityPool {
             expiration_ledger,
         };
         
-        e.storage().temporary().set(&allowance_key, &allowance_value);
-        e.storage().temporary().extend_ttl(&allowance_key, 100, 100);
+        e.storage().persistent().set(&allowance_key, &allowance_value);
+        e.storage().persistent().extend_ttl(&allowance_key, 100, 100);
         
         Ok(())
     }
@@ -429,7 +429,7 @@ impl LiquidityPool {
             spender,
         });
         
-        match e.storage().temporary().get::<_, AllowanceValue>(&allowance_key) {
+        match e.storage().persistent().get::<_, AllowanceValue>(&allowance_key) {
             Some(allowance) => {
                 // Check if allowance has expired
                 if e.ledger().sequence() > allowance.expiration_ledger {
@@ -462,13 +462,13 @@ impl LiquidityPool {
             // Update existing allowance
             let allowance_value = AllowanceValue {
                 amount: new_allowance,
-                expiration_ledger: e.storage().temporary().get::<_, AllowanceValue>(&allowance_key).unwrap().expiration_ledger,
+                expiration_ledger: e.storage().persistent().get::<_, AllowanceValue>(&allowance_key).unwrap().expiration_ledger,
             };
-            e.storage().temporary().set(&allowance_key, &allowance_value);
-            e.storage().temporary().extend_ttl(&allowance_key, 100, 100);
+            e.storage().persistent().set(&allowance_key, &allowance_value);
+            e.storage().persistent().extend_ttl(&allowance_key, 100, 100);
         } else {
             // Remove allowance if it's depleted
-            e.storage().temporary().remove(&allowance_key);
+            e.storage().persistent().remove(&allowance_key);
         }
         
         // Perform the transfer using existing transfer logic
