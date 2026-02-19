@@ -287,3 +287,8 @@ High (200 points): Advanced testing techniques.
 Please provide an ETA (Estimated Time of Arrival) when requesting to be assigned to this issue. Failure to provide an ETA may result in the assignment being delayed or rejected.
 
 ---
+
+### #51 [Contract] feat: Implement Liquidity Pool Factory
+
+**Status:** Completed via #51.
+**Summary:** Implemented a factory contract that deploys unique `LiquidityPool` contracts using deterministic addresses (salt).
