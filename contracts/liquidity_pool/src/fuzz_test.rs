@@ -27,7 +27,7 @@ proptest! {
 
         let contract_id = e.register(crate::LiquidityPool, ());
         let client = LiquidityPoolClient::new(&e, &contract_id);
-        
+
         client.initialize(&admin, &token_a, &token_b);
 
         let user = Address::generate(&e);
@@ -50,7 +50,7 @@ proptest! {
 
         // Perform the swap
         // A swap can fail due to slippage exceeded if in_max wasn't enough, which is an expected error.
-        // But with a huge in_max it shouldn't fail. 
+        // But with a huge in_max it shouldn't fail.
         let res = client.try_swap(&swapper, &buy_a, &valid_amount_out, &in_max);
 
         if let Ok(Ok(_)) = res {
@@ -62,7 +62,7 @@ proptest! {
             let pool_balance_b = token_b_client.balance(&contract_id);
 
             let k_after = pool_balance_a as i128 * pool_balance_b as i128;
-            
+
             assert!(k_after >= k_before, "Invariant violated! K before: {}, K after: {}", k_before, k_after);
         }
     }
