@@ -1,6 +1,6 @@
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events},
+    testutils::{Address as _, Events, Ledger},
     Address, Env,
 };
 
@@ -429,7 +429,9 @@ fn test_approve_expired() {
     client.approve(&user1, &spender, &500, &expiration_ledger);
 
     // Advance ledger to expire allowance
-    e.ledger().set(e.ledger().sequence() + 15);
+    let mut ledger_info = e.ledger().get();
+    ledger_info.sequence_number += 15;
+    e.ledger().set(ledger_info);
 
     // Check that allowance is now 0 (expired)
     assert_eq!(client.allowance(&user1, &spender), 0);
@@ -560,12 +562,12 @@ fn test_transfer_from_insufficient_balance() {
     // Mint and deposit to get shares
     token_a_admin.mint(&user1, &1000);
     token_b_admin.mint(&user1, &1000);
-    let shares = client.deposit(&user1, &1000, &1000);
+    let _shares = client.deposit(&user1, &1000, &1000);
 
     // Approve more shares than user has (should still fail on balance check)
     let expiration_ledger = e.ledger().sequence() + 1000;
-    client.approve(&user1, &spender, &shares + 100, &expiration_ledger);
+    client.approve(&user1, &spender, &(1000 + 100), &expiration_ledger);
 
     // Try to transfer more than user's balance
-    client.transfer_from(&spender, &user1, &user2, &(shares + 50)); // Should panic with InsufficientBalance
+    client.transfer_from(&spender, &user1, &user2, &(1000 + 50)); // Should panic with InsufficientBalance
 }
