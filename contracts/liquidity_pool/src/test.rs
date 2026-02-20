@@ -350,7 +350,7 @@ fn test_events() {
     assert!(!events.is_empty());
 }
 
-// ===== Admin Fee Control Tests =====
+// ===== Allowance and TransferFrom Tests =====
 
 #[test]
 fn test_approve() {
@@ -464,32 +464,7 @@ fn test_approve_expired() {
 }
 
 #[test]
-fn test_set_fee_valid() {
-    let e = Env::default();
-    e.mock_all_auths();
-
-    let contract_id = e.register(LiquidityPool, ());
-    let client = LiquidityPoolClient::new(&e, &contract_id);
-
-    let admin = Address::generate(&e);
-    let token_a = e
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let token_b = e
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-
-    e.cost_estimate().budget().reset_unlimited();
-
-    client.initialize(&admin, &token_a, &token_b);
-
-    // Admin updates fee to 10 bps
-    client.set_fee(&10);
-    assert_eq!(client.get_fee(), 10);
-}
-
-#[test]
-fn test_set_fee_boundary() {
+fn test_transfer_from() {
     let e = Env::default();
     e.mock_all_auths();
 
@@ -838,4 +813,141 @@ fn test_withdraw_when_paused() {
 
     // Try to withdraw - should panic with Paused error
     client.withdraw(&user, &shares);
+}
+
+// ===== Admin Fee Control Tests =====
+
+#[test]
+fn test_get_fee_default() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register(LiquidityPool, ());
+    let client = LiquidityPoolClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let token_a = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    client.initialize(&admin, &token_a, &token_b);
+
+    // Default fee should be 30 bps
+    assert_eq!(client.get_fee(), 30);
+}
+
+#[test]
+fn test_set_fee_valid() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register(LiquidityPool, ());
+    let client = LiquidityPoolClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let token_a = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    client.initialize(&admin, &token_a, &token_b);
+
+    // Admin updates fee to 10 bps
+    client.set_fee(&10);
+    assert_eq!(client.get_fee(), 10);
+}
+
+#[test]
+fn test_set_fee_boundary() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register(LiquidityPool, ());
+    let client = LiquidityPoolClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let token_a = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    client.initialize(&admin, &token_a, &token_b);
+
+    // 0 bps (free swaps) — valid lower bound
+    client.set_fee(&0);
+    assert_eq!(client.get_fee(), 0);
+
+    // 100 bps (1%) — valid upper bound
+    client.set_fee(&100);
+    assert_eq!(client.get_fee(), 100);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_set_fee_above_max() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register(LiquidityPool, ());
+    let client = LiquidityPoolClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let token_a = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    client.initialize(&admin, &token_a, &token_b);
+
+    // 101 bps — should panic with InvalidFee
+    client.set_fee(&101);
+}
+
+#[test]
+fn test_swap_with_custom_fee() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register(LiquidityPool, ());
+    let client = LiquidityPoolClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let token_a = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_b = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
+
+    let user = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&admin, &token_a, &token_b);
+
+    // Mint and deposit
+    token_a_admin.mint(&user, &10000);
+    token_b_admin.mint(&user, &10000);
+    client.deposit(&user, &1000, &1000);
+
+    // Set fee to 0 bps
+    client.set_fee(&0);
+
+    // Swap 100 B out, pay with A
+    // Out = 100. Rin = 1000, Rout = 1000.
+    // AmountIn = (1000 * 100) / (1000 - 100) + 1 = 111 + 1 = 112
+    let paid = client.swap(&user, &false, &100, &500);
+    assert_eq!(paid, 112);
 }
