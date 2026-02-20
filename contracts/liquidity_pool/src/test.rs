@@ -30,7 +30,7 @@ fn test_basic_flow() {
     e.cost_estimate().budget().reset_unlimited();
 
     // Check initialize
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
     let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
@@ -81,9 +81,9 @@ fn test_double_initialization() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
     // Should panic with AlreadyInitialized error
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn test_swap_insufficient_liquidity() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user, &1000);
@@ -145,7 +145,7 @@ fn test_swap_slippage_exceeded() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user, &1000);
@@ -180,7 +180,7 @@ fn test_withdraw_insufficient_shares() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user, &1000);
@@ -214,7 +214,7 @@ fn test_token_interface() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Test token metadata
     assert_eq!(client.name(), String::from_str(&e, "Liquidity Pool Share"));
@@ -259,7 +259,7 @@ fn test_transfer() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user1, &1000);
@@ -300,7 +300,7 @@ fn test_transfer_insufficient_balance() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user1, &1000);
@@ -334,7 +334,7 @@ fn test_events() {
 
     e.cost_estimate().budget().reset_unlimited();
 
-    client.initialize(&token_a, &token_b);
+    client.initialize(&admin, &token_a, &token_b);
 
     // Mint and deposit
     token_a_admin.mint(&user, &1000);
@@ -350,8 +350,10 @@ fn test_events() {
     assert!(!events.is_empty());
 }
 
+// ===== Admin Fee Control Tests =====
+
 #[test]
-fn test_approve() {
+fn test_get_fee_default() {
     let e = Env::default();
     e.mock_all_auths();
 
@@ -395,6 +397,14 @@ fn test_approve() {
 
 #[test]
 fn test_approve_expired() {
+    client.initialize(&admin, &token_a, &token_b);
+
+    // Default fee should be 30 bps
+    assert_eq!(client.get_fee(), 30);
+}
+
+#[test]
+fn test_set_fee_valid() {
     let e = Env::default();
     e.mock_all_auths();
 
@@ -437,6 +447,15 @@ fn test_approve_expired() {
 
 #[test]
 fn test_transfer_from() {
+    client.initialize(&admin, &token_a, &token_b);
+
+    // Admin updates fee to 10 bps
+    client.set_fee(&10);
+    assert_eq!(client.get_fee(), 10);
+}
+
+#[test]
+fn test_set_fee_boundary() {
     let e = Env::default();
     e.mock_all_auths();
 
@@ -491,6 +510,20 @@ fn test_transfer_from() {
 #[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_transfer_from_insufficient_allowance() {
+    client.initialize(&admin, &token_a, &token_b);
+
+    // 0 bps (free swaps) — valid lower bound
+    client.set_fee(&0);
+    assert_eq!(client.get_fee(), 0);
+
+    // 100 bps (1%) — valid upper bound
+    client.set_fee(&100);
+    assert_eq!(client.get_fee(), 100);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_set_fee_above_max() {
     let e = Env::default();
     e.mock_all_auths();
 
@@ -532,6 +565,14 @@ fn test_transfer_from_insufficient_allowance() {
 #[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_transfer_from_insufficient_balance() {
+    client.initialize(&admin, &token_a, &token_b);
+
+    // 101 bps — should panic with InvalidFee
+    client.set_fee(&101);
+}
+
+#[test]
+fn test_swap_with_custom_fee() {
     let e = Env::default();
     e.mock_all_auths();
 
