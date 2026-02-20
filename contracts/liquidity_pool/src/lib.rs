@@ -3,6 +3,8 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod fuzz_test;
 
 // Custom Error enum for better error handling
 /// Errors returned by the `LiquidityPool` contract.
