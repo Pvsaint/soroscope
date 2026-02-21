@@ -2,6 +2,8 @@
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String};
 
 #[cfg(test)]
+mod fuzz_test;
+#[cfg(test)]
 mod test;
 
 // Custom Error enum for better error handling
@@ -18,6 +20,7 @@ pub enum Error {
     InsufficientBalance = 6,
     Unauthorized = 7,
     InvalidFee = 8,
+    Paused = 9,
 }
 
 // Event structures for state-changing operations
@@ -65,6 +68,16 @@ pub struct WithdrawEvent {
     pub amount_b: i128,
 }
 
+/// Event payload emitted after a successful burn.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BurnEvent {
+    /// Address that burned liquidity.
+    pub user: Address,
+    /// LP shares burned.
+    pub shares_burned: i128,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeChangedEvent {
@@ -90,6 +103,20 @@ fn sqrt(x: i128) -> i128 {
     y
 }
 
+#[derive(Clone)]
+#[contracttype]
+pub struct AllowanceDataKey {
+    pub from: Address,
+    pub spender: Address,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AllowanceValue {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+
 /// Storage keys used by the liquidity pool contract.
 #[contracttype]
 #[derive(Clone)]
@@ -104,6 +131,20 @@ pub enum DataKey {
     Allowance(AllowanceDataKey),
     Admin,
     FeeBasisPoints,
+    Paused,
+}
+
+fn check_paused(e: &Env) -> Result<(), Error> {
+    let paused: bool = e
+        .storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false);
+    if paused {
+        Err(Error::Paused)
+    } else {
+        Ok(())
+    }
 }
 
 #[contract]
@@ -182,6 +223,18 @@ impl LiquidityPool {
         Ok(())
     }
 
+    /// Admin-only: pause or unpause the pool.
+    pub fn set_paused(e: Env, paused: bool) -> Result<(), Error> {
+        let admin: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        e.storage().instance().set(&DataKey::Paused, &paused);
+        Ok(())
+    }
+
     /// Deposits token A and token B into the pool and mints LP shares.
     ///
     /// The caller (`to`) must authorize the transfer. For first liquidity,
@@ -199,6 +252,7 @@ impl LiquidityPool {
     /// - `Err(Error::NotInitialized)`: Pool tokens were not configured.
     /// - `Err(Error::InsufficientLiquidity)`: Arithmetic failed (for example overflow).
     pub fn deposit(e: Env, to: Address, amount_a: i128, amount_b: i128) -> Result<i128, Error> {
+        check_paused(&e)?;
         to.require_auth();
 
         // Transfer tokens to the contract
@@ -307,6 +361,7 @@ impl LiquidityPool {
     /// - `Err(Error::InsufficientLiquidity)`: Requested `out` exceeds available reserve.
     /// - `Err(Error::SlippageExceeded)`: Required input is greater than `in_max`.
     pub fn swap(e: Env, to: Address, buy_a: bool, out: i128, in_max: i128) -> Result<i128, Error> {
+        check_paused(&e)?;
         to.require_auth();
 
         let token_a: Address = e
@@ -412,6 +467,7 @@ impl LiquidityPool {
     /// - `Err(Error::InsufficientShares)`: User does not own enough LP shares.
     /// - `Err(Error::NotInitialized)`: Pool state is incomplete or not initialized.
     pub fn withdraw(e: Env, to: Address, share_amount: i128) -> Result<(i128, i128), Error> {
+        check_paused(&e)?;
         to.require_auth();
 
         let user_share_key = DataKey::Balance(to.clone());
@@ -483,6 +539,57 @@ impl LiquidityPool {
         Ok((amount_a, amount_b))
     }
 
+    /// Burns LP shares without withdrawing token reserves.
+    ///
+    /// # Parameters
+    /// - `e`: Soroban environment.
+    /// - `from`: Address burning the tokens.
+    /// - `amount`: Number of LP shares to burn.
+    ///
+    /// # Returns
+    /// - `Ok(())`: Success.
+    /// - `Err(Error::InsufficientShares)`: User does not own enough LP shares.
+    /// - `Err(Error::NotInitialized)`: Pool state is incomplete or not initialized.
+    pub fn burn(e: Env, from: Address, amount: i128) -> Result<(), Error> {
+        check_paused(&e)?;
+        from.require_auth();
+
+        let user_share_key = DataKey::Balance(from.clone());
+        let current_user_share: i128 = e.storage().persistent().get(&user_share_key).unwrap_or(0);
+        if amount > current_user_share {
+            return Err(Error::InsufficientShares);
+        }
+
+        let total_shares: i128 = e
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .ok_or(Error::NotInitialized)?;
+
+        // Burn shares (persistent storage)
+        e.storage()
+            .persistent()
+            .set(&user_share_key, &(current_user_share - amount));
+        e.storage()
+            .persistent()
+            .extend_ttl(&user_share_key, 100, 100);
+
+        e.storage()
+            .instance()
+            .set(&DataKey::TotalShares, &(total_shares - amount));
+
+        // Emit burn event
+        e.events().publish(
+            (String::from_str(&e, "burn"), from.clone()),
+            BurnEvent {
+                user: from,
+                shares_burned: amount,
+            },
+        );
+
+        Ok(())
+    }
+
     // ========== Token Interface Methods ==========
     // Make LP shares compatible with Soroban Token standard
 
@@ -546,6 +653,15 @@ impl LiquidityPool {
     pub fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) -> Result<(), Error> {
         from.require_auth();
         
+    pub fn approve(
+        e: Env,
+        from: Address,
+        spender: Address,
+        amount: i128,
+        expiration_ledger: u32,
+    ) -> Result<(), Error> {
+        from.require_auth();
+
         let allowance_key = DataKey::Allowance(AllowanceDataKey {
             from: from.clone(),
             spender: spender.clone(),
@@ -555,20 +671,25 @@ impl LiquidityPool {
             amount,
             expiration_ledger,
         };
-        
-        e.storage().temporary().set(&allowance_key, &allowance_value);
-        e.storage().temporary().extend_ttl(&allowance_key, 100, 100);
-        
+
+        e.storage()
+            .persistent()
+            .set(&allowance_key, &allowance_value);
+        e.storage()
+            .persistent()
+            .extend_ttl(&allowance_key, 100, 100);
+
         Ok(())
     }
-    
+
     pub fn allowance(e: Env, from: Address, spender: Address) -> i128 {
-        let allowance_key = DataKey::Allowance(AllowanceDataKey {
-            from,
-            spender,
-        });
-        
-        match e.storage().temporary().get::<_, AllowanceValue>(&allowance_key) {
+        let allowance_key = DataKey::Allowance(AllowanceDataKey { from, spender });
+
+        match e
+            .storage()
+            .persistent()
+            .get::<_, AllowanceValue>(&allowance_key)
+        {
             Some(allowance) => {
                 // Check if allowance has expired
                 if e.ledger().sequence() > allowance.expiration_ledger {
@@ -584,12 +705,23 @@ impl LiquidityPool {
     pub fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) -> Result<(), Error> {
         spender.require_auth();
         
+
+    pub fn transfer_from(
+        e: Env,
+        spender: Address,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        spender.require_auth();
+
         // Check allowance
         let current_allowance = Self::allowance(e.clone(), from.clone(), spender.clone());
         if current_allowance < amount {
             return Err(Error::InsufficientBalance); // Using existing error type
         }
         
+
         // Update allowance (decrement by amount)
         let new_allowance = current_allowance - amount;
         let allowance_key = DataKey::Allowance(AllowanceDataKey {
@@ -597,6 +729,7 @@ impl LiquidityPool {
             spender: spender.clone(),
         });
         
+
         if new_allowance > 0 {
             // Update existing allowance
             let allowance_value = AllowanceValue {
@@ -610,6 +743,24 @@ impl LiquidityPool {
             e.storage().temporary().remove(&allowance_key);
         }
         
+                expiration_ledger: e
+                    .storage()
+                    .persistent()
+                    .get::<_, AllowanceValue>(&allowance_key)
+                    .unwrap()
+                    .expiration_ledger,
+            };
+            e.storage()
+                .persistent()
+                .set(&allowance_key, &allowance_value);
+            e.storage()
+                .persistent()
+                .extend_ttl(&allowance_key, 100, 100);
+        } else {
+            // Remove allowance if it's depleted
+            e.storage().persistent().remove(&allowance_key);
+        }
+
         // Perform the transfer using existing transfer logic
         Self::transfer(e, from, to, amount)
     }
