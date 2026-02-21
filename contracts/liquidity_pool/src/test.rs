@@ -350,6 +350,8 @@ fn test_events() {
     assert!(!events.is_empty());
 }
 
+#[test]
+fn test_approve() {
 // ===== Allowance and TransferFrom Tests =====
 
 #[test]
@@ -755,6 +757,35 @@ fn test_get_fee_default() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
+
+    let user1 = Address::generate(&e);
+    let spender = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&token_a, &token_b);
+
+    // Mint and deposit to get shares
+    token_a_admin.mint(&user1, &1000);
+    token_b_admin.mint(&user1, &1000);
+    let shares = client.deposit(&user1, &1000, &1000);
+
+    // Approve spender to use 500 shares
+    let expiration_ledger = e.ledger().sequence() + 1000;
+    client.approve(&user1, &spender, &500, &expiration_ledger);
+
+    // Check allowance
+    assert_eq!(client.allowance(&user1, &spender), 500);
+
+    // Try to approve more - should overwrite
+    client.approve(&user1, &spender, &300, &expiration_ledger);
+    assert_eq!(client.allowance(&user1, &spender), 300);
+}
+
+#[test]
+fn test_approve_expired() {
     client.initialize(&admin, &token_a, &token_b);
 
     // Default fee should be 30 bps
@@ -777,6 +808,36 @@ fn test_set_fee_valid() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
+
+    let user1 = Address::generate(&e);
+    let spender = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&token_a, &token_b);
+
+    // Mint and deposit to get shares
+    token_a_admin.mint(&user1, &1000);
+    token_b_admin.mint(&user1, &1000);
+    client.deposit(&user1, &1000, &1000);
+
+    // Approve with short expiration
+    let expiration_ledger = e.ledger().sequence() + 10;
+    client.approve(&user1, &spender, &500, &expiration_ledger);
+
+    // Advance ledger to expire allowance
+    let mut ledger_info = e.ledger().get();
+    ledger_info.sequence_number += 15;
+    e.ledger().set(ledger_info);
+
+    // Check that allowance is now 0 (expired)
+    assert_eq!(client.allowance(&user1, &spender), 0);
+}
+
+#[test]
+fn test_transfer_from() {
     client.initialize(&admin, &token_a, &token_b);
 
     // Admin updates fee to 10 bps
@@ -800,6 +861,46 @@ fn test_set_fee_boundary() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
+
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let spender = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&token_a, &token_b);
+
+    // Mint and deposit to get shares
+    token_a_admin.mint(&user1, &1000);
+    token_b_admin.mint(&user1, &1000);
+    let shares = client.deposit(&user1, &1000, &1000);
+
+    // Approve spender to use 500 shares
+    let expiration_ledger = e.ledger().sequence() + 1000;
+    client.approve(&user1, &spender, &500, &expiration_ledger);
+
+    // Spender transfers 200 shares from user1 to user2
+    client.transfer_from(&spender, &user1, &user2, &200);
+
+    // Check balances
+    assert_eq!(client.balance(&user1), shares - 200);
+    assert_eq!(client.balance(&user2), 200);
+    assert_eq!(client.allowance(&user1, &spender), 300); // 500 - 200 = 300 remaining
+
+    // Spender transfers remaining 300 shares
+    client.transfer_from(&spender, &user1, &user2, &300);
+
+    // Check final balances
+    assert_eq!(client.balance(&user1), shares - 500);
+    assert_eq!(client.balance(&user2), 500);
+    assert_eq!(client.allowance(&user1, &spender), 0); // Allowance depleted
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_transfer_from_insufficient_allowance() {
     client.initialize(&admin, &token_a, &token_b);
 
     // 0 bps (free swaps) — valid lower bound
@@ -828,6 +929,33 @@ fn test_set_fee_above_max() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
+
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let spender = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&token_a, &token_b);
+
+    // Mint and deposit to get shares
+    token_a_admin.mint(&user1, &1000);
+    token_b_admin.mint(&user1, &1000);
+    client.deposit(&user1, &1000, &1000);
+
+    // Approve only 100 shares
+    let expiration_ledger = e.ledger().sequence() + 1000;
+    client.approve(&user1, &spender, &100, &expiration_ledger);
+
+    // Try to transfer 200 shares (more than approved)
+    client.transfer_from(&spender, &user1, &user2, &200); // Should panic with InsufficientBalance
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_transfer_from_insufficient_balance() {
     client.initialize(&admin, &token_a, &token_b);
 
     // 101 bps — should panic with InvalidFee
@@ -853,6 +981,26 @@ fn test_swap_with_custom_fee() {
     let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_a);
     let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&e, &token_b);
 
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let spender = Address::generate(&e);
+
+    e.cost_estimate().budget().reset_unlimited();
+
+    client.initialize(&token_a, &token_b);
+
+    // Mint and deposit to get shares
+    token_a_admin.mint(&user1, &1000);
+    token_b_admin.mint(&user1, &1000);
+    let _shares = client.deposit(&user1, &1000, &1000);
+
+    // Approve more shares than user has (should still fail on balance check)
+    let expiration_ledger = e.ledger().sequence() + 1000;
+    client.approve(&user1, &spender, &(1000 + 100), &expiration_ledger);
+
+    // Try to transfer more than user's balance
+    client.transfer_from(&spender, &user1, &user2, &(1000 + 50)); // Should panic with InsufficientBalance
+}
     let user = Address::generate(&e);
 
     e.cost_estimate().budget().reset_unlimited();
