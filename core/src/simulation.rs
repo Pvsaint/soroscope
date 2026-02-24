@@ -153,7 +153,6 @@ impl SimulationEngine {
         }
     }
 
-
     /// Simulate transaction from a deployed contract ID
     ///
     /// # Arguments
@@ -644,7 +643,6 @@ mod tests {
         let engine = SimulationEngine::new("https://soroban-testnet.stellar.org".to_string());
         assert_eq!(engine.rpc_url, "https://soroban-testnet.stellar.org");
     }
-
 
     #[test]
     fn test_calculate_cost() {
